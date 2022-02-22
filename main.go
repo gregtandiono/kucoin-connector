@@ -6,11 +6,12 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/shopspring/decimal"
 )
 
 type TokenResponse struct {
@@ -58,9 +59,9 @@ type TickerInstrument struct {
 }
 
 type TickerData struct {
-	AskPrice int `json:"ask_price"`
-	BidPrice int `json:"bid_price"`
-	Time     int `json:"time"`
+	AskPrice decimal.Decimal `json:"ask_price"`
+	BidPrice decimal.Decimal `json:"bid_price"`
+	Time     int             `json:"time"`
 }
 
 type Ticker struct {
@@ -148,27 +149,27 @@ func main() {
 	}()
 
 	// Subscribe to klines
-	// go func() {
-	// 	for _, s := range symbols.Data {
-	// 		log.Println("Subscribing to kline ->", s.Symbol)
+	go func() {
+		for _, s := range symbols.Data {
+			log.Println("Subscribing to kline ->", s.Symbol)
 
-	// 		topic := fmt.Sprintf("/market/candles:%s_1min", s.Symbol)
-	// 		id := uuid.NewString()
+			topic := fmt.Sprintf("/market/candles:%s_1min", s.Symbol)
+			id := uuid.NewString()
 
-	// 		b, _ := json.Marshal(SubscriptionRequest{
-	// 			Id:             id,
-	// 			Type:           "subscribe",
-	// 			Topic:          topic,
-	// 			PrivateChannel: false,
-	// 			Response:       true,
-	// 		})
-	// 		err := c.WriteMessage(websocket.TextMessage, b)
-	// 		if err != nil {
-	// 			log.Println("Unable to subscribe to klineticker", err)
-	// 			return
-	// 		}
-	// 	}
-	// }()
+			b, _ := json.Marshal(SubscriptionRequest{
+				Id:             id,
+				Type:           "subscribe",
+				Topic:          topic,
+				PrivateChannel: false,
+				Response:       true,
+			})
+			err := c.WriteMessage(websocket.TextMessage, b)
+			if err != nil {
+				log.Println("Unable to subscribe to klineticker", err)
+				return
+			}
+		}
+	}()
 
 	// pingInterval := tokenResp.Data.InstanceServers[0].PingInterval
 	// log.Println("ping interval", time.Duration(pingInterval))
@@ -177,6 +178,8 @@ func main() {
 	defer ticker.Stop()
 
 	trade := make(chan []byte)
+	rawTickerData := make(chan []byte)
+	rawKlineData := make(chan []byte)
 	tickerPayload := make(chan Ticker)
 
 	// Message Reader & Handler
@@ -187,21 +190,41 @@ func main() {
 				log.Println("read err:", err)
 				break
 			}
-			// <-ticker.C
 
+			// <-ticker.C
 			trade <- message
 		}
 		close(trade)
 	}()
 
-	// transform ticker
+	// filter
 	go func() {
 		for t := range trade {
+			var data struct {
+				Topic string `json:"topic"`
+			}
+			json.Unmarshal(t, &data)
+			slice := strings.Split(data.Topic, ":")
+			topic := slice[0]
+
+			if topic == "/market/ticker" {
+				rawTickerData <- t
+			}
+
+			if topic == "/market/candles" {
+				rawKlineData <- t
+			}
+		}
+	}()
+
+	// transform ticker
+	go func() {
+		for t := range rawTickerData {
 			var raw TickerRaw
 			json.Unmarshal(t, &raw)
 
-			askPrice, _ := strconv.Atoi(raw.Data.BestAsk)
-			bidPrice, _ := strconv.Atoi(raw.Data.BestBid)
+			askPrice, _ := decimal.NewFromString(raw.Data.BestAsk)
+			bidPrice, _ := decimal.NewFromString(raw.Data.BestBid)
 
 			result := Ticker{
 				Type: "ticker",
@@ -219,6 +242,19 @@ func main() {
 			}
 			tickerPayload <- result
 		}
+		close(tickerPayload)
+	}()
+
+	// ticker payload handler for clients
+	go func() {
+		for t := range tickerPayload {
+			log.Println(t)
+		}
+	}()
+
+	// transform kline
+	go func() {
+
 	}()
 
 	// ping
