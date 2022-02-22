@@ -6,8 +6,10 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -30,8 +32,66 @@ type Ping struct {
 	Type string `json:"type"`
 }
 
+type Symbol struct {
+	Code string `json:"code"`
+	Data []struct {
+		Symbol string `json:"symbol"`
+	} `json:"data"`
+}
+
+type TickerRaw struct {
+	Type    string `json:"type"`
+	Topic   string `json:"topic"`
+	Subject string `json:"subject"`
+	Data    struct {
+		BestAsk string `json:"bestAsk"`
+		BestBid string `json:"bestBid"`
+		Time    int    `json:"time"`
+	} `json:"data"`
+}
+
+type TickerInstrument struct {
+	Exchange      string `json:"exchange"`
+	Symbol        string `json:"symbol"`
+	BaseCurrency  string `json:"base_currency"`
+	QuoteCurrency string `json:"quote_currency"`
+}
+
+type TickerData struct {
+	AskPrice int `json:"ask_price"`
+	BidPrice int `json:"bid_price"`
+	Time     int `json:"time"`
+}
+
+type Ticker struct {
+	Type       string           `json:"type"`
+	Instrument TickerInstrument `json:"instrument"`
+	Data       TickerData       `json:"data"`
+}
+
+type Kline struct {
+	Type       string `json:"type"`
+	Instrument struct {
+		Exchange      string `json:"exchange"`
+		Symbol        string `json:"symbol"`
+		BaseCurrency  string `json:"base_currency"`
+		QuoteCurrency string `json:"quote_currency"`
+	} `json:"instrument"`
+	Data struct {
+		IntervalSeconds int `json:"interval_seconds"`
+		StartTime       int `json:"start_time"`
+		EndTime         int `json:"end_time"`
+		Open            int `json:"open"`
+		High            int `json:"high"`
+		Low             int `json:"low"`
+		Close           int `json:"close"`
+		VolumeBase      int `json:"volume_base"`
+		VolumeQuote     int `json:"volume_quote"`
+	}
+}
+
 type SubscriptionRequest struct {
-	Id             int    `json:"id"`
+	Id             string `json:"id"`
 	Type           string `json:"type"`
 	Topic          string `json:"topic"`
 	PrivateChannel bool   `json:"privateChannel"`
@@ -44,16 +104,20 @@ func main() {
 		log.Fatal("Unable to retrieve public token", err)
 	}
 	defer r.Body.Close()
-	body, err := ioutil.ReadAll(r.Body)
-
-	if err != nil {
-		log.Fatal("Public token error", err)
-	}
+	body, _ := ioutil.ReadAll(r.Body)
 
 	var tokenResp TokenResponse
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		log.Fatal("Unable to parse response body", err)
+	json.Unmarshal(body, &tokenResp)
+
+	sr, err := http.Get("https://api.kucoin.com/api/v1/symbols")
+	if err != nil {
+		log.Fatal("Unable to fetch all symbols", err)
 	}
+	defer sr.Body.Close()
+	srBody, _ := ioutil.ReadAll(sr.Body)
+
+	var symbols Symbol
+	json.Unmarshal(srBody, &symbols)
 
 	connectId := "loremipsumdolorsitamet78436"
 
@@ -61,85 +125,114 @@ func main() {
 	c, _, err := websocket.DefaultDialer.Dial(u, nil)
 
 	if err != nil {
-		log.Fatal("dial:", err)
+		log.Fatal("Unable to dial into exchange ws:", err)
 	}
 	defer c.Close()
 
-	messageType := make(chan int, 1)
+	// Subscribe to all symbol tickers
+	go func() {
+		log.Println("subscribing to all tickers")
+		id := uuid.NewString()
+		b, _ := json.Marshal(SubscriptionRequest{
+			Id:             id,
+			Type:           "subscribe",
+			Topic:          "/market/ticker:all",
+			PrivateChannel: false,
+			Response:       true,
+		})
+		err := c.WriteMessage(websocket.TextMessage, b)
+		if err != nil {
+			log.Println("Unable to subscribe to ticker", err)
+			return
+		}
+	}()
+
+	// Subscribe to klines
+	// go func() {
+	// 	for _, s := range symbols.Data {
+	// 		log.Println("Subscribing to kline ->", s.Symbol)
+
+	// 		topic := fmt.Sprintf("/market/candles:%s_1min", s.Symbol)
+	// 		id := uuid.NewString()
+
+	// 		b, _ := json.Marshal(SubscriptionRequest{
+	// 			Id:             id,
+	// 			Type:           "subscribe",
+	// 			Topic:          topic,
+	// 			PrivateChannel: false,
+	// 			Response:       true,
+	// 		})
+	// 		err := c.WriteMessage(websocket.TextMessage, b)
+	// 		if err != nil {
+	// 			log.Println("Unable to subscribe to klineticker", err)
+	// 			return
+	// 		}
+	// 	}
+	// }()
+
+	// pingInterval := tokenResp.Data.InstanceServers[0].PingInterval
+	// log.Println("ping interval", time.Duration(pingInterval))
+
+	ticker := time.NewTicker(time.Second * 1)
+	defer ticker.Stop()
+
+	trade := make(chan []byte)
+	tickerPayload := make(chan Ticker)
 
 	// Message Reader & Handler
 	go func() {
 		for {
-			mt, message, err := c.ReadMessage()
+			_, message, err := c.ReadMessage()
 			if err != nil {
 				log.Println("read err:", err)
+				break
 			}
-			messageType <- mt
-			// log.Println(string(message))
+			// <-ticker.C
+
+			trade <- message
+		}
+		close(trade)
+	}()
+
+	// transform ticker
+	go func() {
+		for t := range trade {
+			var raw TickerRaw
+			json.Unmarshal(t, &raw)
+
+			askPrice, _ := strconv.Atoi(raw.Data.BestAsk)
+			bidPrice, _ := strconv.Atoi(raw.Data.BestBid)
+
+			result := Ticker{
+				Type: "ticker",
+				Instrument: TickerInstrument{
+					Exchange:      "kucoin",
+					Symbol:        raw.Subject,
+					BaseCurrency:  "USD",
+					QuoteCurrency: "USD",
+				},
+				Data: TickerData{
+					AskPrice: askPrice,
+					BidPrice: bidPrice,
+					Time:     raw.Data.Time,
+				},
+			}
+			tickerPayload <- result
 		}
 	}()
 
-	// Ping
-	// go func() {
-	// 	m := <-messageType
-
-	// 	b, err := json.Marshal(Ping{Id: connectId, Type: "ping"})
-	// 	if err != nil {
-	// 		log.Println("err", err)
-	// 		return
-	// 	}
-	// 	writeErr := c.WriteMessage(m, b)
-	// 	if writeErr != nil {
-	// 		log.Println("Unable to ping ws server")
-	// 		return
-	// 	}
-	// }()
-
-	// Subscribe
+	// ping
 	go func() {
-		log.Println("subscribing")
-		m := <-messageType
-		b, err := json.Marshal(SubscriptionRequest{
-			Id:             1545910660739,
-			Type:           "subscribe",
-			Topic:          "/market/ticker:BTC-USDT",
-			PrivateChannel: false,
-			Response:       true,
-		})
-		if err != nil {
-			log.Println("err", err)
-			return
-		}
-
-		writeErr := c.WriteMessage(m, b)
-		if writeErr != nil {
-			log.Println("Unable to subscribe to ticker")
-			return
-		}
-	}()
-
-	pingInterval := tokenResp.Data.InstanceServers[0].PingInterval
-	log.Println("ping interval", time.Duration(pingInterval))
-
-	ticker := time.NewTicker(time.Second * 10)
-	defer ticker.Stop()
-
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				b, err := json.Marshal(Ping{Id: connectId, Type: "ping"})
-				if err != nil {
-					log.Println("err", err)
-					return
-				}
-				writeErr := c.WriteMessage(1, b)
-				if writeErr != nil {
-					log.Println("Unable to ping ws server")
-					return
-				}
-			case <-messageType:
-				// log.Println("message type inferred")
+		for range ticker.C {
+			b, err := json.Marshal(Ping{Id: connectId, Type: "ping"})
+			if err != nil {
+				log.Println("err", err)
+				return
+			}
+			writeErr := c.WriteMessage(websocket.TextMessage, b)
+			if writeErr != nil {
+				log.Println("Unable to ping ws server")
+				return
 			}
 		}
 	}()
