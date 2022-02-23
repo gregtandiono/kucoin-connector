@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"kucoin-ws-connector/connector"
 	"log"
 	"net/http"
 	"strconv"
@@ -14,20 +15,6 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/shopspring/decimal"
 )
-
-type TokenResponse struct {
-	Code string `json:"code"`
-	Data struct {
-		InstanceServers []struct {
-			Endpoint     string `json:"endpoint"`
-			Protocol     string `json:"protocol"`
-			Encrypt      bool   `json:"encrypt"`
-			PingInterval int    `json:"pingInterval"`
-			PingTimeout  int    `json:"pingTimeout"`
-		} `json:"instanceServers"`
-		Token string `json:"token"`
-	} `json:"data"`
-}
 
 type Ping struct {
 	Id   string `json:"id"`
@@ -100,25 +87,7 @@ type Kline struct {
 	Data       KlineData        `json:"data"`
 }
 
-type SubscriptionRequest struct {
-	Id             string `json:"id"`
-	Type           string `json:"type"`
-	Topic          string `json:"topic"`
-	PrivateChannel bool   `json:"privateChannel"`
-	Response       bool   `json:"response"`
-}
-
 func main() {
-	r, err := http.Post("https://api.kucoin.com/api/v1/bullet-public", "application/json", nil)
-	if err != nil {
-		log.Fatal("Unable to retrieve public token", err)
-	}
-	defer r.Body.Close()
-	body, _ := ioutil.ReadAll(r.Body)
-
-	var tokenResp TokenResponse
-	json.Unmarshal(body, &tokenResp)
-
 	sr, err := http.Get("https://api.kucoin.com/api/v1/symbols")
 	if err != nil {
 		log.Fatal("Unable to fetch all symbols", err)
@@ -129,21 +98,58 @@ func main() {
 	var symbols Symbol
 	json.Unmarshal(srBody, &symbols)
 
-	connectId := "loremipsumdolorsitamet78436"
+	log.Println("How many symbols", len(symbols.Data))
 
-	u := fmt.Sprintf("wss://ws-api.kucoin.com/endpoint?token=%s&[connectId=%s]", tokenResp.Data.Token, connectId)
-	c, _, err := websocket.DefaultDialer.Dial(u, nil)
+	c, _, err := connector.CreateKucoinWSClient()
+	if err != nil {
+		log.Fatal("Unable to dial into exchange ws:", err)
+	}
 
 	if err != nil {
 		log.Fatal("Unable to dial into exchange ws:", err)
 	}
 	defer c.Close()
 
+	ticker := time.NewTicker(time.Second * 1)
+	defer ticker.Stop()
+
+	trade := make(chan []byte)
+	rawTickerData := make(chan []byte)
+	rawKlineData := make(chan []byte)
+
+	tickerPayload := make(chan Ticker)
+	klinePayload := make(chan Kline)
+
+	go func() {
+		for _, s := range symbols.Data {
+			log.Println("Subscribing to kline ->", s.Symbol)
+			topic := fmt.Sprintf("/market/candles:%s_1min", s.Symbol)
+			id := uuid.NewString()
+			s := connector.SubscriptionRequest{
+				Id:             id,
+				Type:           "subscribe",
+				Topic:          topic,
+				PrivateChannel: false,
+				Response:       true,
+			}
+
+			k, _, err := connector.CreateKucoinWSClient()
+			if err != nil {
+				log.Println("Unable to subscribe ws client for kline topic->", topic)
+			}
+
+			sErr := connector.SubscribeToTopic(k, s)
+			if sErr != nil {
+				log.Println("Unable to subscribe ws client for kline topic->", topic)
+			}
+		}
+	}()
+
 	// Subscribe to all symbol tickers
 	go func() {
 		log.Println("subscribing to all tickers")
 		id := uuid.NewString()
-		b, _ := json.Marshal(SubscriptionRequest{
+		b, _ := json.Marshal(connector.SubscriptionRequest{
 			Id:             id,
 			Type:           "subscribe",
 			Topic:          "/market/ticker:all",
@@ -157,73 +163,8 @@ func main() {
 		}
 	}()
 
-	// Subscribe to klines
-	go func() {
-		log.Println("Subscribing to kline ->")
-
-		topic := fmt.Sprintf("/market/candles:%s_1min", "BTC-USDT")
-		id := uuid.NewString()
-
-		b, _ := json.Marshal(SubscriptionRequest{
-			Id:             id,
-			Type:           "subscribe",
-			Topic:          topic,
-			PrivateChannel: false,
-			Response:       true,
-		})
-		err := c.WriteMessage(websocket.TextMessage, b)
-		if err != nil {
-			log.Println("Unable to subscribe to klineticker", err)
-			return
-		}
-		// for _, s := range symbols.Data {
-		// 	log.Println("Subscribing to kline ->", s.Symbol)
-
-		// 	topic := fmt.Sprintf("/market/candles:%s_1min", s.Symbol)
-		// 	id := uuid.NewString()
-
-		// 	b, _ := json.Marshal(SubscriptionRequest{
-		// 		Id:             id,
-		// 		Type:           "subscribe",
-		// 		Topic:          topic,
-		// 		PrivateChannel: false,
-		// 		Response:       true,
-		// 	})
-		// 	err := c.WriteMessage(websocket.TextMessage, b)
-		// 	if err != nil {
-		// 		log.Println("Unable to subscribe to klineticker", err)
-		// 		return
-		// 	}
-		// }
-	}()
-
-	// pingInterval := tokenResp.Data.InstanceServers[0].PingInterval
-	// log.Println("ping interval", time.Duration(pingInterval))
-
-	ticker := time.NewTicker(time.Second * 1)
-	defer ticker.Stop()
-
-	trade := make(chan []byte)
-	rawTickerData := make(chan []byte)
-	rawKlineData := make(chan []byte)
-
-	tickerPayload := make(chan Ticker)
-	klinePayload := make(chan Kline)
-
 	// Message Reader & Handler
-	go func() {
-		for {
-			_, message, err := c.ReadMessage()
-			if err != nil {
-				log.Println("read err:", err)
-				break
-			}
-
-			// <-ticker.C
-			trade <- message
-		}
-		close(trade)
-	}()
+	go connector.InitKucoinListener(c, trade)
 
 	// filter
 	go func() {
@@ -293,7 +234,7 @@ func main() {
 				Type: "ohlc",
 				Instrument: KucoinInstrument{
 					Exchange:      "kucoin",
-					Symbol:        raw.Subject,
+					Symbol:        raw.Data.Symbol,
 					BaseCurrency:  "USD",
 					QuoteCurrency: "USD",
 				},
@@ -318,26 +259,11 @@ func main() {
 	go func() {
 		for {
 			select {
-			case t := <-tickerPayload:
-				log.Println(t)
 			case t := <-klinePayload:
 				log.Println(t)
-			}
-		}
-	}()
-
-	// ping
-	go func() {
-		for range ticker.C {
-			b, err := json.Marshal(Ping{Id: connectId, Type: "ping"})
-			if err != nil {
-				log.Println("err", err)
-				return
-			}
-			writeErr := c.WriteMessage(websocket.TextMessage, b)
-			if writeErr != nil {
-				log.Println("Unable to ping ws server")
-				return
+			case <-tickerPayload:
+				// case t := <-tickerPayload:
+				// 	log.Println(t)
 			}
 		}
 	}()
