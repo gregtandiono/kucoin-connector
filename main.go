@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,7 +52,18 @@ type TickerRaw struct {
 	} `json:"data"`
 }
 
-type TickerInstrument struct {
+type KlineRaw struct {
+	Type    string `json:"type"`
+	Topic   string `json:"topic"`
+	Subject string `json:"subject"`
+	Data    struct {
+		Symbol  string   `json:"symbol"`
+		Candles []string `json:"candles"`
+		Time    int      `json:"time"`
+	} `json:"data"`
+}
+
+type KucoinInstrument struct {
 	Exchange      string `json:"exchange"`
 	Symbol        string `json:"symbol"`
 	BaseCurrency  string `json:"base_currency"`
@@ -61,34 +73,31 @@ type TickerInstrument struct {
 type TickerData struct {
 	AskPrice decimal.Decimal `json:"ask_price"`
 	BidPrice decimal.Decimal `json:"bid_price"`
-	Time     int             `json:"time"`
+	Time     int             `json:"raw"`
 }
 
 type Ticker struct {
 	Type       string           `json:"type"`
-	Instrument TickerInstrument `json:"instrument"`
+	Instrument KucoinInstrument `json:"instrument"`
 	Data       TickerData       `json:"data"`
 }
 
+type KlineData struct {
+	IntervalSeconds int             `json:"interval_seconds"`
+	StartTime       int             `json:"start_time"`
+	EndTime         int             `json:"end_time"`
+	Open            decimal.Decimal `json:"open"`
+	High            decimal.Decimal `json:"high"`
+	Low             decimal.Decimal `json:"low"`
+	Close           decimal.Decimal `json:"close"`
+	VolumeBase      decimal.Decimal `json:"volume_base"`
+	VolumeQuote     decimal.Decimal `json:"volume_quote"`
+}
+
 type Kline struct {
-	Type       string `json:"type"`
-	Instrument struct {
-		Exchange      string `json:"exchange"`
-		Symbol        string `json:"symbol"`
-		BaseCurrency  string `json:"base_currency"`
-		QuoteCurrency string `json:"quote_currency"`
-	} `json:"instrument"`
-	Data struct {
-		IntervalSeconds int `json:"interval_seconds"`
-		StartTime       int `json:"start_time"`
-		EndTime         int `json:"end_time"`
-		Open            int `json:"open"`
-		High            int `json:"high"`
-		Low             int `json:"low"`
-		Close           int `json:"close"`
-		VolumeBase      int `json:"volume_base"`
-		VolumeQuote     int `json:"volume_quote"`
-	}
+	Type       string           `json:"type"`
+	Instrument KucoinInstrument `json:"instrument"`
+	Data       KlineData        `json:"data"`
 }
 
 type SubscriptionRequest struct {
@@ -150,25 +159,42 @@ func main() {
 
 	// Subscribe to klines
 	go func() {
-		for _, s := range symbols.Data {
-			log.Println("Subscribing to kline ->", s.Symbol)
+		log.Println("Subscribing to kline ->")
 
-			topic := fmt.Sprintf("/market/candles:%s_1min", s.Symbol)
-			id := uuid.NewString()
+		topic := fmt.Sprintf("/market/candles:%s_1min", "BTC-USDT")
+		id := uuid.NewString()
 
-			b, _ := json.Marshal(SubscriptionRequest{
-				Id:             id,
-				Type:           "subscribe",
-				Topic:          topic,
-				PrivateChannel: false,
-				Response:       true,
-			})
-			err := c.WriteMessage(websocket.TextMessage, b)
-			if err != nil {
-				log.Println("Unable to subscribe to klineticker", err)
-				return
-			}
+		b, _ := json.Marshal(SubscriptionRequest{
+			Id:             id,
+			Type:           "subscribe",
+			Topic:          topic,
+			PrivateChannel: false,
+			Response:       true,
+		})
+		err := c.WriteMessage(websocket.TextMessage, b)
+		if err != nil {
+			log.Println("Unable to subscribe to klineticker", err)
+			return
 		}
+		// for _, s := range symbols.Data {
+		// 	log.Println("Subscribing to kline ->", s.Symbol)
+
+		// 	topic := fmt.Sprintf("/market/candles:%s_1min", s.Symbol)
+		// 	id := uuid.NewString()
+
+		// 	b, _ := json.Marshal(SubscriptionRequest{
+		// 		Id:             id,
+		// 		Type:           "subscribe",
+		// 		Topic:          topic,
+		// 		PrivateChannel: false,
+		// 		Response:       true,
+		// 	})
+		// 	err := c.WriteMessage(websocket.TextMessage, b)
+		// 	if err != nil {
+		// 		log.Println("Unable to subscribe to klineticker", err)
+		// 		return
+		// 	}
+		// }
 	}()
 
 	// pingInterval := tokenResp.Data.InstanceServers[0].PingInterval
@@ -180,7 +206,9 @@ func main() {
 	trade := make(chan []byte)
 	rawTickerData := make(chan []byte)
 	rawKlineData := make(chan []byte)
+
 	tickerPayload := make(chan Ticker)
+	klinePayload := make(chan Kline)
 
 	// Message Reader & Handler
 	go func() {
@@ -219,16 +247,16 @@ func main() {
 
 	// transform ticker
 	go func() {
-		for t := range rawTickerData {
+		for d := range rawTickerData {
 			var raw TickerRaw
-			json.Unmarshal(t, &raw)
+			json.Unmarshal(d, &raw)
 
 			askPrice, _ := decimal.NewFromString(raw.Data.BestAsk)
 			bidPrice, _ := decimal.NewFromString(raw.Data.BestBid)
 
 			result := Ticker{
 				Type: "ticker",
-				Instrument: TickerInstrument{
+				Instrument: KucoinInstrument{
 					Exchange:      "kucoin",
 					Symbol:        raw.Subject,
 					BaseCurrency:  "USD",
@@ -245,16 +273,57 @@ func main() {
 		close(tickerPayload)
 	}()
 
-	// ticker payload handler for clients
-	go func() {
-		for t := range tickerPayload {
-			log.Println(t)
-		}
-	}()
-
 	// transform kline
 	go func() {
+		for d := range rawKlineData {
+			var raw KlineRaw
+			json.Unmarshal(d, &raw)
 
+			startTime, _ := strconv.Atoi(raw.Data.Candles[0])
+			endTime := startTime + 3600
+
+			openPrice, _ := decimal.NewFromString(raw.Data.Candles[1])
+			closePrice, _ := decimal.NewFromString(raw.Data.Candles[2])
+			highPrice, _ := decimal.NewFromString(raw.Data.Candles[3])
+			lowPrice, _ := decimal.NewFromString(raw.Data.Candles[4])
+			volumeBase, _ := decimal.NewFromString(raw.Data.Candles[5])
+			volumeQuote, _ := decimal.NewFromString(raw.Data.Candles[6])
+
+			result := Kline{
+				Type: "ohlc",
+				Instrument: KucoinInstrument{
+					Exchange:      "kucoin",
+					Symbol:        raw.Subject,
+					BaseCurrency:  "USD",
+					QuoteCurrency: "USD",
+				},
+				Data: KlineData{
+					IntervalSeconds: 3600,
+					StartTime:       startTime,
+					EndTime:         endTime,
+					Open:            openPrice,
+					High:            highPrice,
+					Low:             lowPrice,
+					Close:           closePrice,
+					VolumeBase:      volumeBase,
+					VolumeQuote:     volumeQuote,
+				},
+			}
+			klinePayload <- result
+		}
+		close(klinePayload)
+	}()
+
+	// handle payload to clients
+	go func() {
+		for {
+			select {
+			case <-tickerPayload:
+				log.Println("Ticker!")
+			case <-klinePayload:
+				log.Println(">>>>>>>>>>>>>>>>> Kline!")
+			}
+		}
 	}()
 
 	// ping
