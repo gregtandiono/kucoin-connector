@@ -318,10 +318,10 @@ func main() {
 	go func() {
 		for {
 			select {
-			case <-tickerPayload:
-				log.Println("Ticker!")
-			case <-klinePayload:
-				log.Println(">>>>>>>>>>>>>>>>> Kline!")
+			case t := <-tickerPayload:
+				log.Println(t)
+			case t := <-klinePayload:
+				log.Println(t)
 			}
 		}
 	}()
