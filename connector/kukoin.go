@@ -40,13 +40,7 @@ type TokenResponse struct {
 	} `json:"data"`
 }
 
-type KucoinInstrument struct {
-	Exchange      string `json:"exchange"`
-	Symbol        string `json:"symbol"`
-	BaseCurrency  string `json:"base_currency"`
-	QuoteCurrency string `json:"quote_currency"`
-}
-type TickerRaw struct {
+type KucoinTickerRaw struct {
 	Type    string `json:"type"`
 	Topic   string `json:"topic"`
 	Subject string `json:"subject"`
@@ -57,19 +51,7 @@ type TickerRaw struct {
 	} `json:"data"`
 }
 
-type TickerData struct {
-	AskPrice decimal.Decimal `json:"ask_price"`
-	BidPrice decimal.Decimal `json:"bid_price"`
-	Time     int             `json:"raw"`
-}
-
-type Ticker struct {
-	Type       string           `json:"type"`
-	Instrument KucoinInstrument `json:"instrument"`
-	Data       TickerData       `json:"data"`
-}
-
-type KlineRaw struct {
+type KucoinKlineRaw struct {
 	Type    string `json:"type"`
 	Topic   string `json:"topic"`
 	Subject string `json:"subject"`
@@ -78,24 +60,6 @@ type KlineRaw struct {
 		Candles []string `json:"candles"`
 		Time    int      `json:"time"`
 	} `json:"data"`
-}
-
-type KlineData struct {
-	IntervalSeconds int             `json:"interval_seconds"`
-	StartTime       int             `json:"start_time"`
-	EndTime         int             `json:"end_time"`
-	Open            decimal.Decimal `json:"open"`
-	High            decimal.Decimal `json:"high"`
-	Low             decimal.Decimal `json:"low"`
-	Close           decimal.Decimal `json:"close"`
-	VolumeBase      decimal.Decimal `json:"volume_base"`
-	VolumeQuote     decimal.Decimal `json:"volume_quote"`
-}
-
-type Kline struct {
-	Type       string           `json:"type"`
-	Instrument KucoinInstrument `json:"instrument"`
-	Data       KlineData        `json:"data"`
 }
 
 func getToken() (token string) {
@@ -162,7 +126,7 @@ func SubscribeToTopic(c *websocket.Conn, topic string, id string) (err error) {
 }
 
 func ProcessRawTickerData(d []byte) (result Ticker) {
-	var raw TickerRaw
+	var raw KucoinTickerRaw
 	json.Unmarshal(d, &raw)
 
 	askPrice, _ := decimal.NewFromString(raw.Data.BestAsk)
@@ -170,7 +134,7 @@ func ProcessRawTickerData(d []byte) (result Ticker) {
 
 	result = Ticker{
 		Type: "ticker",
-		Instrument: KucoinInstrument{
+		Instrument: Instrument{
 			Exchange:      "kucoin",
 			Symbol:        raw.Subject,
 			BaseCurrency:  "USD",
@@ -186,7 +150,7 @@ func ProcessRawTickerData(d []byte) (result Ticker) {
 }
 
 func ProcessRawKlineData(d []byte) (result Kline) {
-	var raw KlineRaw
+	var raw KucoinKlineRaw
 	json.Unmarshal(d, &raw)
 
 	startTime, _ := strconv.Atoi(raw.Data.Candles[0])
@@ -201,7 +165,7 @@ func ProcessRawKlineData(d []byte) (result Kline) {
 
 	result = Kline{
 		Type: "ohlc",
-		Instrument: KucoinInstrument{
+		Instrument: Instrument{
 			Exchange:      "kucoin",
 			Symbol:        raw.Data.Symbol,
 			BaseCurrency:  "USD",
