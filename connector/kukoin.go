@@ -83,7 +83,7 @@ func getToken() (token string) {
 	return
 }
 
-func GetAllKucoinSymbols() (symbols KucoinSymbol) {
+func GetAllKucoinSymbols() (symbols []string) {
 	r, err := http.Get("https://api.kucoin.com/api/v1/symbols")
 	if err != nil {
 		log.Fatal("Unable to fetch all symbols", err)
@@ -93,7 +93,9 @@ func GetAllKucoinSymbols() (symbols KucoinSymbol) {
 
 	var symbolsBody KucoinSymbol
 	json.Unmarshal(body, &symbolsBody)
-	symbols = symbolsBody
+	for _, data := range symbolsBody.Data {
+		symbols = append(symbols, data.Symbol)
+	}
 	return
 }
 
@@ -131,10 +133,16 @@ func PingServer(c *websocket.Conn, id string) (err error) {
 	return
 }
 
-func SubscribeToTopic(c *websocket.Conn, topic string, id string) (err error) {
+func ManageSubscription(c *websocket.Conn, topic string, id string, subscription bool) (err error) {
+	var sub string
+	if subscription {
+		sub = "subscribe"
+	} else {
+		sub = "unsubscribe"
+	}
 	s := SubscriptionRequest{
 		Id:             id,
-		Type:           "subscribe",
+		Type:           sub,
 		Topic:          topic,
 		PrivateChannel: false,
 		Response:       true,

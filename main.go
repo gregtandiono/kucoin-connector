@@ -19,18 +19,14 @@ var upgrader = websocket.Upgrader{
 }
 
 type WSPayload struct {
-	K chan connector.Kline
-	T chan connector.Ticker
+	topic  chan string
+	kline  chan connector.Kline
+	ticker chan connector.Ticker
 }
 
-func payloadHandler(ws *websocket.Conn, k chan connector.Kline, t chan connector.Ticker) {
-	for {
-		select {
-		case d := <-t:
-			ws.WriteJSON(d)
-		case <-k:
-		}
-	}
+type TopicSubscription struct {
+	Type   string `json:"type"`   // ticker
+	Symbol string `json:"symbol"` // symbol
 }
 
 func serveWs(p WSPayload, w http.ResponseWriter, r *http.Request) {
@@ -41,7 +37,43 @@ func serveWs(p WSPayload, w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	go payloadHandler(ws, p.K, p.T)
+
+	receiver := make(chan []byte)
+
+	go func() {
+		_, message, err := ws.ReadMessage()
+		if err != nil {
+			log.Printf("Unable to read message %s", err)
+		}
+		receiver <- message
+	}()
+
+	for m := range receiver {
+		var t TopicSubscription
+		json.Unmarshal(m, &t)
+
+		switch subscriptionType := t.Type; subscriptionType {
+		case "ticker":
+			topic := "/market/ticker:all"
+			p.topic <- topic
+			go func() {
+				for d := range p.ticker {
+					ws.WriteJSON(d)
+				}
+			}()
+		case "kline":
+			topic := fmt.Sprintf("/market/candles:%s_1min", t.Symbol)
+			p.topic <- topic
+			if err != nil {
+				ws.WriteMessage(websocket.TextMessage, []byte("Unable to subscribe to topic"))
+			}
+			go func() {
+				for d := range p.kline {
+					ws.WriteJSON(d)
+				}
+			}()
+		}
+	}
 }
 
 func main() {
@@ -56,39 +88,18 @@ func main() {
 	rawTickerData := make(chan []byte)
 	rawKlineData := make(chan []byte)
 	tickerPayload := make(chan connector.Ticker)
+	topic := make(chan string)
 	klinePayload := make(chan connector.Kline)
-	klineConnector := make(chan *websocket.Conn)
 
 	go func() {
-		for _, s := range symbols.Data {
-			log.Println("Subscribing to kline ->", s.Symbol)
-			topic := fmt.Sprintf("/market/candles:%s_1min", s.Symbol)
+		for topic := range topic {
+			log.Println("subscribing to topic ->", topic)
 			id := uuid.NewString()
-
-			k, _, err := connector.CreateKucoinWSClient()
+			err := connector.ManageSubscription(c, topic, id, true)
 			if err != nil {
-				log.Println("Unable to subscribe ws client for kline topic->", topic)
+				log.Println("Unable to subscribe to ticker", err)
+				return
 			}
-			defer k.Close()
-
-			sErr := connector.SubscribeToTopic(k, topic, id)
-			if sErr != nil {
-				log.Println("Unable to subscribe ws client for kline topic->", topic)
-			}
-
-			klineConnector <- k
-		}
-	}()
-
-	// Subscribe to all symbol tickers
-	go func() {
-		log.Println("subscribing to all tickers")
-		id := uuid.NewString()
-		topic := "/market/ticker:all"
-		err := connector.SubscribeToTopic(c, topic, id)
-		if err != nil {
-			log.Println("Unable to subscribe to ticker", err)
-			return
 		}
 	}()
 
@@ -156,10 +167,21 @@ func main() {
 		w.Write(jsonResp)
 	})
 
+	http.HandleFunc("/symbols", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		jsonSymbols, err := json.Marshal(symbols)
+		if err != nil {
+			log.Fatal("unable to encode json responsel", err)
+		}
+		w.Write(jsonSymbols)
+	})
+
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		p := WSPayload{
-			K: klinePayload,
-			T: tickerPayload,
+			topic:  topic,
+			kline:  klinePayload,
+			ticker: tickerPayload,
 		}
 		serveWs(p, w, r)
 	})
