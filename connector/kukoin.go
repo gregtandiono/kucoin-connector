@@ -17,6 +17,12 @@ type Ping struct {
 	Id   string `json:"id"`
 	Type string `json:"type"`
 }
+type KucoinSymbol struct {
+	Code string `json:"code"`
+	Data []struct {
+		Symbol string `json:"symbol"`
+	} `json:"data"`
+}
 
 type SubscriptionRequest struct {
 	Id             string `json:"id"`
@@ -74,6 +80,20 @@ func getToken() (token string) {
 	json.Unmarshal(body, &tokenResp)
 	token = tokenResp.Data.Token
 
+	return
+}
+
+func GetAllKucoinSymbols() (symbols KucoinSymbol) {
+	r, err := http.Get("https://api.kucoin.com/api/v1/symbols")
+	if err != nil {
+		log.Fatal("Unable to fetch all symbols", err)
+	}
+	defer r.Body.Close()
+	body, _ := ioutil.ReadAll(r.Body)
+
+	var symbolsBody KucoinSymbol
+	json.Unmarshal(body, &symbolsBody)
+	symbols = symbolsBody
 	return
 }
 
@@ -184,15 +204,4 @@ func ProcessRawKlineData(d []byte) (result Kline) {
 		},
 	}
 	return
-}
-
-func PayloadHandler(k chan struct{}, t chan struct{}) {
-	for {
-		select {
-		case d := <-k:
-			log.Println(d)
-		case d := <-t:
-			log.Println(d)
-		}
-	}
 }

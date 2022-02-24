@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"kucoin-ws-connector/connector"
 	"log"
 	"net/http"
@@ -14,42 +13,19 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-type Symbol struct {
-	Code string `json:"code"`
-	Data []struct {
-		Symbol string `json:"symbol"`
-	} `json:"data"`
-}
-
 func main() {
-	sr, err := http.Get("https://api.kucoin.com/api/v1/symbols")
-	if err != nil {
-		log.Fatal("Unable to fetch all symbols", err)
-	}
-	defer sr.Body.Close()
-	srBody, _ := ioutil.ReadAll(sr.Body)
-
-	var symbols Symbol
-	json.Unmarshal(srBody, &symbols)
-
-	log.Println("How many symbols", len(symbols.Data))
-
+	symbols := connector.GetAllKucoinSymbols()
 	c, _, err := connector.CreateKucoinWSClient()
 	if err != nil {
 		log.Fatal("Unable to dial into exchange ws:", err)
 	}
 	defer c.Close()
 
-	ticker := time.NewTicker(time.Second * 1)
-	defer ticker.Stop()
-
 	trade := make(chan []byte)
 	rawTickerData := make(chan []byte)
 	rawKlineData := make(chan []byte)
-
 	tickerPayload := make(chan connector.Ticker)
 	klinePayload := make(chan connector.Kline)
-
 	klineConnector := make(chan *websocket.Conn)
 
 	go func() {
