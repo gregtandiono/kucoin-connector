@@ -109,20 +109,6 @@ func CreateKucoinWSClient() (c *websocket.Conn, connectId string, err error) {
 	return
 }
 
-func InitKucoinListener(c *websocket.Conn, t chan []byte) {
-	for {
-		_, message, err := c.ReadMessage()
-		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("error: %v", err)
-			}
-			log.Printf("error: %v", err)
-			break
-		}
-		t <- message
-	}
-}
-
 func PingServer(c *websocket.Conn, id string) (err error) {
 	b, _ := json.Marshal(Ping{
 		Id:   id,
