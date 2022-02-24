@@ -10,19 +10,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-type ConnectionPool struct {
-	clients    map[*Client]bool
-	register   chan *Client
-	unregister chan *Client
-}
-
-type Client struct {
-	pool     *ConnectionPool
-	ws       *websocket.Conn
-	send     chan []byte
-	receiver chan []byte
-}
-
 type WSPayload struct {
 	Topic  chan string
 	Kline  chan Kline
@@ -40,13 +27,15 @@ var upgrader = websocket.Upgrader{
 }
 
 func InitListener(c *websocket.Conn, receiver chan []byte) {
+	defer func() {
+		c.Close()
+	}()
 	for {
 		_, message, err := c.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("error: %v", err)
 			}
-			log.Printf("error: %v", err)
 			break
 		}
 		receiver <- message
