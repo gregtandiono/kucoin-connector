@@ -13,6 +13,37 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+}
+
+type WSPayload struct {
+	K chan connector.Kline
+	T chan connector.Ticker
+}
+
+func payloadHandler(ws *websocket.Conn, k chan connector.Kline, t chan connector.Ticker) {
+	for {
+		select {
+		case d := <-t:
+			ws.WriteJSON(d)
+		case <-k:
+		}
+	}
+}
+
+func serveWs(p WSPayload, w http.ResponseWriter, r *http.Request) {
+	ws, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		if _, ok := err.(websocket.HandshakeError); !ok {
+			log.Println(err)
+		}
+		return
+	}
+	go payloadHandler(ws, p.K, p.T)
+}
+
 func main() {
 	symbols := connector.GetAllKucoinSymbols()
 	c, _, err := connector.CreateKucoinWSClient()
@@ -112,28 +143,26 @@ func main() {
 		}
 	}()
 
-	// handle payload to clients
-	go func() {
-		for {
-			select {
-			case t := <-klinePayload:
-				log.Println(t)
-			case k := <-klineConnector:
-				go connector.InitKucoinListener(k, trade)
-				go func() {
-					id := uuid.NewString()
-					for range time.Tick(10 * time.Second) {
-						err := connector.PingServer(k, id)
-						if err != nil {
-							log.Println("Ping error", err)
-						}
-					}
-				}()
-			case t := <-tickerPayload:
-				log.Println(t)
-			}
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		resp := make(map[string]string)
+
+		resp["message"] = "OK"
+		jsonResp, err := json.Marshal(resp)
+		if err != nil {
+			log.Fatal("Unable to encode json response", err)
 		}
-	}()
+		w.Write(jsonResp)
+	})
+
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		p := WSPayload{
+			K: klinePayload,
+			T: tickerPayload,
+		}
+		serveWs(p, w, r)
+	})
 
 	log.Fatal(http.ListenAndServe(":3000", nil))
 }
