@@ -79,13 +79,18 @@ func (client *Client) Write() {
 		switch subscriptionType := t.Type; subscriptionType {
 		case "ticker":
 			go func() {
-				for d := range client.payload.Ticker {
-					for c := range client.pool.clients {
-						if c.topic == subscriptionType {
-							c.mu.Lock()
-							c.conn.WriteJSON(d)
-							c.mu.Unlock()
+				for {
+					select {
+					case <-client.payload.Kline:
+					case d := <-client.payload.Ticker:
+						for c := range client.pool.clients {
+							if c.topic == subscriptionType {
+								c.mu.Lock()
+								c.conn.WriteJSON(d)
+								c.mu.Unlock()
+							}
 						}
+
 					}
 				}
 			}()
