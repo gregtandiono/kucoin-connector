@@ -60,7 +60,6 @@ func (p *Pool) Run() {
 			p.clients[client] = true
 		case client := <-p.unregister:
 			delete(p.clients, client)
-			// close(client.send)
 		}
 	}
 }
