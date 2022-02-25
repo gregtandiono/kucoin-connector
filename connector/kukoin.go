@@ -78,6 +78,14 @@ type KucoinClient struct {
 	ID             string
 }
 
+func (c *KucoinClient) Receive() {
+	InitListener(c.Conn, c.Trade)
+}
+
+func (c *KucoinClient) Subscribe(topic string) error {
+	return ManageSubscription(c.Conn, topic, c.ID, true)
+}
+
 func getToken() (token string) {
 	r, err := http.Post("https://api.kucoin.com/api/v1/bullet-public", "application/json", nil)
 	if err != nil {

@@ -36,22 +36,22 @@ func main() {
 		log.Fatal("Unable to dial into exchange ws:", err)
 	}
 	defer client.Conn.Close()
+	go client.Receive()
 
+	// create separate client for kline topics, because we need to subscribe to all
 	kClient, err := connector.CreateKucoinClient()
 	if err != nil {
 		log.Fatal("Unable to dial into exchange ws:", err)
 	}
 	defer kClient.Conn.Close()
+	go kClient.Receive()
 
 	ticker := time.NewTicker(5 * time.Second)
 
-	// go connector.TopicManager(client.Conn, client.Topic)
-	go connector.InitListener(client.Conn, client.Trade)
-	go connector.InitListener(kClient.Conn, kClient.Trade)
-
 	go func() {
 		log.Println("subscribing to topic ->", tickerTopic)
-		err := connector.ManageSubscription(client.Conn, tickerTopic, client.ID, true)
+
+		err := client.Subscribe(tickerTopic)
 		if err != nil {
 			log.Println("unable to subscribe to ticker", err)
 		}
@@ -60,16 +60,18 @@ func main() {
 	go func() {
 		for _, symbol := range symbols {
 			<-time.Tick(250 * time.Millisecond) // stagger the writes to the ws server
+
 			topic := fmt.Sprintf("/market/candles:%s_1min", symbol)
 			log.Println("subscribing to topic ->", topic)
-			id := symbol + client.ID
-			err := connector.ManageSubscription(kClient.Conn, topic, id, true)
+
+			err := kClient.Subscribe(topic)
 			if err != nil {
 				log.Println("unable to subscribe to kline", err)
 			}
 		}
 	}()
 
+	// @TODO: abstract this to its own function
 	go func() {
 		for {
 			select {
@@ -90,7 +92,7 @@ func main() {
 				}
 				err2 := connector.PingServer(kClient.Conn, kClient.ID)
 				if err2 != nil {
-					log.Println("Ping error", err)
+					log.Println("Ping error 2", err)
 				}
 			}
 		}

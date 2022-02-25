@@ -25,9 +25,7 @@ var upgrader = websocket.Upgrader{
 }
 
 func InitListener(c *websocket.Conn, receiver chan []byte) {
-	defer func() {
-		c.Close()
-	}()
+	defer c.Close()
 	for {
 		_, message, err := c.ReadMessage()
 		if err != nil {
