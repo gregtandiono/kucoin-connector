@@ -67,6 +67,16 @@ type KucoinKlineRaw struct {
 		Time    int      `json:"time"`
 	} `json:"data"`
 }
+type KucoinClient struct {
+	Conn           *websocket.Conn
+	Topic          chan string
+	Trade          chan []byte
+	IncomingTicker chan []byte
+	IncomingKline  chan []byte
+	OutboundTicker chan Ticker
+	OutboundKline  chan Kline
+	ID             string
+}
 
 func getToken() (token string) {
 	r, err := http.Post("https://api.kucoin.com/api/v1/bullet-public", "application/json", nil)
@@ -99,14 +109,24 @@ func GetAllKucoinSymbols() (symbols []string) {
 	return
 }
 
-func CreateKucoinWSClient() (c *websocket.Conn, connectId string, err error) {
+func CreateKucoinClient() (*KucoinClient, error) {
 	token := getToken()
-	connectId = uuid.NewString()
+	connectId := uuid.NewString()
 
 	u := fmt.Sprintf("wss://ws-api.kucoin.com/endpoint?token=%s&[connectId=%s]", token, connectId)
-	c, _, err = websocket.DefaultDialer.Dial(u, nil)
+	c, _, err := websocket.DefaultDialer.Dial(u, nil)
 
-	return
+	client := &KucoinClient{
+		Conn:           c,
+		ID:             connectId,
+		Topic:          make(chan string),
+		Trade:          make(chan []byte),
+		IncomingTicker: make(chan []byte),
+		IncomingKline:  make(chan []byte),
+		OutboundTicker: make(chan Ticker),
+		OutboundKline:  make(chan Kline),
+	}
+	return client, err
 }
 
 func PingServer(c *websocket.Conn, id string) (err error) {

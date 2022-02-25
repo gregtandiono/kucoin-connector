@@ -2,13 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"kucoin-ws-connector/connector"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -17,68 +17,81 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 }
 
+const tickerTopic = "/market/ticker:all"
+
+func getTopic(t []byte) (topic string) {
+	var data struct {
+		Topic string `json:"topic"`
+	}
+	json.Unmarshal(t, &data)
+	slice := strings.Split(data.Topic, ":")
+	topic = slice[0]
+	return
+}
+
 func main() {
 	symbols := connector.GetAllKucoinSymbols()
-	c, _, err := connector.CreateKucoinWSClient()
+	client, err := connector.CreateKucoinClient()
 	if err != nil {
 		log.Fatal("Unable to dial into exchange ws:", err)
 	}
-	defer c.Close()
+	defer client.Conn.Close()
 
-	trade := make(chan []byte)
-	rawTickerData := make(chan []byte)
-	rawKlineData := make(chan []byte)
-	tickerPayload := make(chan connector.Ticker)
-	topic := make(chan string)
-	klinePayload := make(chan connector.Kline)
+	kClient, err := connector.CreateKucoinClient()
+	if err != nil {
+		log.Fatal("Unable to dial into exchange ws:", err)
+	}
+	defer kClient.Conn.Close()
 
-	go connector.TopicManager(c, topic)
-	go connector.InitListener(c, trade)
+	ticker := time.NewTicker(5 * time.Second)
 
-	// filter
+	// go connector.TopicManager(client.Conn, client.Topic)
+	go connector.InitListener(client.Conn, client.Trade)
+	go connector.InitListener(kClient.Conn, kClient.Trade)
+
 	go func() {
-		for t := range trade {
-			var data struct {
-				Topic string `json:"topic"`
-			}
-			json.Unmarshal(t, &data)
-			slice := strings.Split(data.Topic, ":")
-			topic := slice[0]
-
-			if topic == "/market/ticker" {
-				rawTickerData <- t
-			}
-
-			if topic == "/market/candles" {
-				rawKlineData <- t
-			}
+		log.Println("subscribing to topic ->", tickerTopic)
+		err := connector.ManageSubscription(client.Conn, tickerTopic, client.ID, true)
+		if err != nil {
+			log.Println("unable to subscribe to ticker", err)
 		}
 	}()
 
-	// transform ticker
 	go func() {
-		for d := range rawTickerData {
-			result := connector.ProcessRawTickerData(d)
-			tickerPayload <- result
-		}
-		close(tickerPayload)
-	}()
-
-	// transform kline
-	go func() {
-		for d := range rawKlineData {
-			result := connector.ProcessRawKlineData(d)
-			klinePayload <- result
-		}
-		close(klinePayload)
-	}()
-
-	go func() {
-		id := uuid.NewString()
-		for range time.Tick(10 * time.Second) {
-			err := connector.PingServer(c, id)
+		for _, symbol := range symbols {
+			<-time.Tick(250 * time.Millisecond) // stagger the writes to the ws server
+			topic := fmt.Sprintf("/market/candles:%s_1min", symbol)
+			log.Println("subscribing to topic ->", topic)
+			id := symbol + client.ID
+			err := connector.ManageSubscription(kClient.Conn, topic, id, true)
 			if err != nil {
-				log.Println("Ping error", err)
+				log.Println("unable to subscribe to kline", err)
+			}
+		}
+	}()
+
+	go func() {
+		for {
+			select {
+			case t := <-client.Trade:
+				topic := getTopic(t)
+				if topic == "/market/ticker" {
+					client.OutboundTicker <- connector.ProcessRawTickerData(t)
+				}
+			case t := <-kClient.Trade:
+				topic := getTopic(t)
+				if topic == "/market/candles" {
+					kClient.OutboundKline <- connector.ProcessRawKlineData(t)
+				}
+			case <-ticker.C:
+				err := connector.PingServer(client.Conn, client.ID)
+				if err != nil {
+					log.Println("Ping error", err)
+				}
+				err2 := connector.PingServer(kClient.Conn, kClient.ID)
+				if err2 != nil {
+					log.Println("Ping error", err)
+				}
 			}
 		}
 	}()
@@ -96,21 +109,11 @@ func main() {
 		w.Write(jsonResp)
 	})
 
-	http.HandleFunc("/symbols", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		jsonSymbols, err := json.Marshal(symbols)
-		if err != nil {
-			log.Fatal("unable to encode json response", err)
-		}
-		w.Write(jsonSymbols)
-	})
-
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		p := connector.WSPayload{
-			Topic:  topic,
-			Kline:  klinePayload,
-			Ticker: tickerPayload,
+			Topic:  client.Topic,
+			Kline:  kClient.OutboundKline,
+			Ticker: client.OutboundTicker,
 		}
 		connector.ServeWs(p, w, r)
 	})

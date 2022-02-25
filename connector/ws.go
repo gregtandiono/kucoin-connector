@@ -2,7 +2,6 @@ package connector
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 
@@ -17,8 +16,7 @@ type WSPayload struct {
 }
 
 type TopicSubscription struct {
-	Type   string `json:"type"`   // ticker
-	Symbol string `json:"symbol"` // symbol
+	Type string `json:"type"` // ticker
 }
 
 var upgrader = websocket.Upgrader{
@@ -60,19 +58,12 @@ func ServeWs(p WSPayload, w http.ResponseWriter, r *http.Request) {
 
 		switch subscriptionType := t.Type; subscriptionType {
 		case "ticker":
-			topic := "/market/ticker:all"
-			p.Topic <- topic
 			go func() {
 				for d := range p.Ticker {
 					ws.WriteJSON(d)
 				}
 			}()
 		case "kline":
-			topic := fmt.Sprintf("/market/candles:%s_1min", t.Symbol)
-			p.Topic <- topic
-			if err != nil {
-				ws.WriteMessage(websocket.TextMessage, []byte("Unable to subscribe to topic"))
-			}
 			go func() {
 				for d := range p.Kline {
 					ws.WriteJSON(d)
