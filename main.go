@@ -98,6 +98,10 @@ func main() {
 		}
 	}()
 
+	// Spawn connection pool to manage clients
+	pool := connector.NewPool()
+	go pool.Run()
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -117,7 +121,7 @@ func main() {
 			Kline:  kClient.OutboundKline,
 			Ticker: client.OutboundTicker,
 		}
-		connector.ServeWs(p, w, r)
+		connector.ServeWs(pool, p, w, r)
 	})
 
 	log.Fatal(http.ListenAndServe(":3000", nil))

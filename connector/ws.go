@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -18,10 +19,56 @@ type WSPayload struct {
 type TopicSubscription struct {
 	Type string `json:"type"` // ticker
 }
+type Client struct {
+	pool *Pool
+
+	// The websocket connection.
+	conn *websocket.Conn
+
+	// Buffered channel of outbound messages.
+	mu sync.Mutex
+
+	topic string
+}
+
+type Pool struct {
+	// Registered clients.
+	clients map[*Client]bool
+
+	// Inbound messages from the clients.
+	broadcast chan []byte
+
+	// Register requests from the clients.
+	register chan *Client
+
+	// Unregister requests from clients.
+	unregister chan *Client
+}
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
+}
+
+func NewPool() *Pool {
+	return &Pool{
+		clients:    make(map[*Client]bool),
+		broadcast:  make(chan []byte),
+		register:   make(chan *Client),
+		unregister: make(chan *Client),
+	}
+}
+
+func (p *Pool) Run() {
+	for {
+		select {
+		case client := <-p.register:
+			p.clients[client] = true
+		case client := <-p.unregister:
+			delete(p.clients, client)
+			// close(client.send)
+		}
+	}
 }
 
 func InitListener(c *websocket.Conn, receiver chan []byte) {
@@ -38,7 +85,7 @@ func InitListener(c *websocket.Conn, receiver chan []byte) {
 	}
 }
 
-func ServeWs(p WSPayload, w http.ResponseWriter, r *http.Request) {
+func ServeWs(pool *Pool, p WSPayload, w http.ResponseWriter, r *http.Request) {
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		if _, ok := err.(websocket.HandshakeError); !ok {
@@ -47,6 +94,13 @@ func ServeWs(p WSPayload, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	client := &Client{
+		pool: pool,
+		conn: ws,
+	}
+
+	pool.register <- client
+
 	receiver := make(chan []byte)
 	go InitListener(ws, receiver)
 
@@ -54,17 +108,31 @@ func ServeWs(p WSPayload, w http.ResponseWriter, r *http.Request) {
 		var t TopicSubscription
 		json.Unmarshal(m, &t)
 
+		client.topic = t.Type
+
 		switch subscriptionType := t.Type; subscriptionType {
 		case "ticker":
 			go func() {
 				for d := range p.Ticker {
-					ws.WriteJSON(d)
+					for c := range pool.clients {
+						if c.topic == subscriptionType {
+							c.mu.Lock()
+							c.conn.WriteJSON(d)
+							c.mu.Unlock()
+						}
+					}
 				}
 			}()
 		case "kline":
 			go func() {
 				for d := range p.Kline {
-					ws.WriteJSON(d)
+					for c := range pool.clients {
+						if c.topic == subscriptionType {
+							c.mu.Lock()
+							c.conn.WriteJSON(d)
+							c.mu.Unlock()
+						}
+					}
 				}
 			}()
 		}
