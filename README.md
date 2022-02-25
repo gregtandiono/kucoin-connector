@@ -14,7 +14,7 @@ Websocket endpoint:
 ws://localhost:3000/ws
 ```
 
-Example:
+Connecting as a client example:
 ```golang
 package main
 
