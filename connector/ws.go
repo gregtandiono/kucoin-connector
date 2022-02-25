@@ -28,6 +28,10 @@ type Client struct {
 	// Buffered channel of outbound messages.
 	mu sync.Mutex
 
+	payload WSPayload
+
+	receiver chan []byte
+
 	topic string
 }
 
@@ -94,17 +98,28 @@ func ServeWs(pool *Pool, p WSPayload, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	receiver := make(chan []byte)
+
 	client := &Client{
-		pool: pool,
-		conn: ws,
+		pool:     pool,
+		conn:     ws,
+		payload:  p,
+		receiver: receiver,
 	}
 
 	pool.register <- client
 
-	receiver := make(chan []byte)
 	go InitListener(ws, receiver)
+	go client.Write()
+}
 
-	for m := range receiver {
+func (client *Client) Write() {
+	defer func() {
+		log.Println("close motherfucker!")
+		client.pool.unregister <- client
+		client.conn.Close()
+	}()
+	for m := range client.receiver {
 		var t TopicSubscription
 		json.Unmarshal(m, &t)
 
@@ -113,8 +128,8 @@ func ServeWs(pool *Pool, p WSPayload, w http.ResponseWriter, r *http.Request) {
 		switch subscriptionType := t.Type; subscriptionType {
 		case "ticker":
 			go func() {
-				for d := range p.Ticker {
-					for c := range pool.clients {
+				for d := range client.payload.Ticker {
+					for c := range client.pool.clients {
 						if c.topic == subscriptionType {
 							c.mu.Lock()
 							c.conn.WriteJSON(d)
@@ -125,8 +140,8 @@ func ServeWs(pool *Pool, p WSPayload, w http.ResponseWriter, r *http.Request) {
 			}()
 		case "kline":
 			go func() {
-				for d := range p.Kline {
-					for c := range pool.clients {
+				for d := range client.payload.Kline {
+					for c := range client.pool.clients {
 						if c.topic == subscriptionType {
 							c.mu.Lock()
 							c.conn.WriteJSON(d)
