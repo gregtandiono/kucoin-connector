@@ -35,22 +35,25 @@ go run tickersubscriber.go
 2. Seem like you can only see the kline data coming in if a client has subscribed to the ticker topic beforehand. The workaround:
 ```golang
 // connectors/ws.go
-		case "kline":
-			go func() {
-				for {
-					select {
-					case <-client.payload.Ticker:
-					case d := <-client.payload.Kline:
-						for c := range client.pool.clients {
-							if c.topic == subscriptionType {
-								c.mu.Lock()
-								c.conn.WriteJSON(d)
-								c.mu.Unlock()
-							}
-						}
+
+//...
+case "kline":
+	go func() {
+		for {
+			select {
+			case <-client.payload.Ticker:
+			case d := <-client.payload.Kline:
+				for c := range client.pool.clients {
+					if c.topic == subscriptionType {
+						c.mu.Lock()
+						c.conn.WriteJSON(d)
+						c.mu.Unlock()
 					}
 				}
-			}()
+			}
+		}
+	}()
+//...
 ```
 
 
