@@ -31,9 +31,10 @@ go run tickersubscriber.go
 ```
 
 ## Notes 
-1. Sometimes it takes a few seconds to start the server because the server needs to fetch the symbols list, and the kucoin REST API is a bit unstable at times.
+1. Sometimes it takes a few seconds to start the server because the server needs to fetch the symbols list, and the kucoin REST API can a bit unstable at times.
 2. Seem like you can only see the kline data coming in if a client has subscribed to the ticker topic beforehand. The workaround:
 ```golang
+// connectors/ws.go
 		case "kline":
 			go func() {
 				for {
