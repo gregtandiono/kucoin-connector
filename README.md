@@ -1,8 +1,11 @@
 # Kucoin Connector
 
-This is a websocket server that connects to the Kucoin exchange API. This server subscribes to the ticker and kline (candles) endpoint.
+This is a websocket server that connects to the [Kucoin](https://www.kucoin.com/) exchange [API](https://docs.kucoin.com). This server subscribes to the ticker and kline (candles) endpoint.
 
 ## Getting Started
+**Prerequisite:**
+
+- [Go](https://go.dev/doc/install)
 
 Start the server. Default port is 3000.
  ```bash
