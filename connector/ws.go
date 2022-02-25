@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -22,10 +21,8 @@ type TopicSubscription struct {
 type Client struct {
 	pool *Pool
 
-	// The websocket connection.
 	conn *websocket.Conn
 
-	// Buffered channel of outbound messages.
 	mu sync.Mutex
 
 	payload WSPayload
@@ -36,16 +33,10 @@ type Client struct {
 }
 
 type Pool struct {
-	// Registered clients.
 	clients map[*Client]bool
 
-	// Inbound messages from the clients.
-	broadcast chan []byte
-
-	// Register requests from the clients.
 	register chan *Client
 
-	// Unregister requests from clients.
 	unregister chan *Client
 }
 
@@ -57,7 +48,6 @@ var upgrader = websocket.Upgrader{
 func NewPool() *Pool {
 	return &Pool{
 		clients:    make(map[*Client]bool),
-		broadcast:  make(chan []byte),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 	}
@@ -115,7 +105,6 @@ func ServeWs(pool *Pool, p WSPayload, w http.ResponseWriter, r *http.Request) {
 
 func (client *Client) Write() {
 	defer func() {
-		log.Println("close motherfucker!")
 		client.pool.unregister <- client
 		client.conn.Close()
 	}()
@@ -150,18 +139,6 @@ func (client *Client) Write() {
 					}
 				}
 			}()
-		}
-	}
-}
-
-func TopicManager(c *websocket.Conn, topic chan string) {
-	for topic := range topic {
-		log.Println("subscribing to topic ->", topic)
-		id := uuid.NewString()
-		err := ManageSubscription(c, topic, id, true)
-		if err != nil {
-			log.Println("Unable to subscribe to ticker", err)
-			return
 		}
 	}
 }
