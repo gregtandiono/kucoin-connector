@@ -14,6 +14,13 @@ Websocket endpoint:
 ws://localhost:3000/ws
 ```
 
+You can subscribe to 2 topics: `ticker` and `kline`. Send the following JSON to the server:
+```json
+{"type": "ticker"}
+```
+
+You will immediately see ticker data coming in.
+
 Connecting as a client example:
 ```golang
 package main
@@ -63,13 +70,6 @@ func main() {
 	}
 }
 ```
-
-
-You can subscribe to 2 topics: `ticker` and `kline`. Send the following JSON to the server:
-```json
-{"type": "ticker"}
-```
-You will immediately see ticker data coming in.
 
 ## Notes 
 1. Sometimes it takes a few seconds to start the server because the server needs to fetch the symbols list, and the kucoin REST API is a bit unstable at times.
