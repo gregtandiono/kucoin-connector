@@ -71,3 +71,26 @@ You can subscribe to 2 topics: `ticker` and `kline`. Send the following JSON to 
 ```
 You will immediately see ticker data coming in.
 
+## Notes 
+1. Sometimes it takes a few seconds to start the server because the server needs to fetch the symbols list, and the kucoin REST API is a bit unstable at times.
+2. Seem like you can only see the kline data coming in if a client has subscribed to the ticker topic beforehand. The workaround:
+```golang
+		case "kline":
+			go func() {
+				for {
+					select {
+					case <-client.payload.Ticker:
+					case d := <-client.payload.Kline:
+						for c := range client.pool.clients {
+							if c.topic == subscriptionType {
+								c.mu.Lock()
+								c.conn.WriteJSON(d)
+								c.mu.Unlock()
+							}
+						}
+					}
+				}
+			}()
+```
+
+

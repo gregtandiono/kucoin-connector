@@ -79,7 +79,7 @@ type KucoinClient struct {
 }
 
 func (c *KucoinClient) Receive() {
-	InitListener(c.Conn, c.Trade)
+	go InitListener(c.Conn, c.Trade)
 }
 
 func (c *KucoinClient) Subscribe(topic string) error {

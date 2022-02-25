@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -90,13 +91,18 @@ func (client *Client) Write() {
 			}()
 		case "kline":
 			go func() {
-				for d := range client.payload.Kline {
-					for c := range client.pool.clients {
-						if c.topic == subscriptionType {
-							c.mu.Lock()
-							c.conn.WriteJSON(d)
-							c.mu.Unlock()
+				for {
+					select {
+					case <-client.payload.Ticker:
+					case d := <-client.payload.Kline:
+						for c := range client.pool.clients {
+							if c.topic == subscriptionType {
+								c.mu.Lock()
+								c.conn.WriteJSON(d)
+								c.mu.Unlock()
+							}
 						}
+
 					}
 				}
 			}()
@@ -105,8 +111,9 @@ func (client *Client) Write() {
 }
 
 func InitListener(c *websocket.Conn, receiver chan []byte) {
-	defer c.Close()
+	ticker := time.NewTicker(150 * time.Millisecond) // staggering the reads so I can see the terminal logs better
 	for {
+		<-ticker.C
 		_, message, err := c.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {

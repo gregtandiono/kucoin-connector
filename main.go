@@ -30,6 +30,7 @@ func getTopic(t []byte) (topic string) {
 }
 
 func main() {
+	log.Println("Connecting to Kucoin websocket server...")
 	symbols := connector.GetAllKucoinSymbols()
 	client, err := connector.CreateKucoinClient()
 	if err != nil {
@@ -38,7 +39,7 @@ func main() {
 	defer client.Conn.Close()
 	go client.Receive()
 
-	// create separate client for kline topics, because we need to subscribe to all
+	// create separate client for kline topics, because we need to subscribe to all symbols
 	kClient, err := connector.CreateKucoinClient()
 	if err != nil {
 		log.Fatal("Unable to dial into exchange ws:", err)
