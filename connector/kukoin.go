@@ -196,7 +196,7 @@ func ProcessRawKlineData(d []byte) (result Kline) {
 	json.Unmarshal(d, &raw)
 
 	startTime, _ := strconv.Atoi(raw.Data.Candles[0])
-	endTime := startTime + 3600
+	endTime := startTime + 60 // I set the kline at 1min for now.
 
 	openPrice, _ := decimal.NewFromString(raw.Data.Candles[1])
 	closePrice, _ := decimal.NewFromString(raw.Data.Candles[2])
