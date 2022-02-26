@@ -41,6 +41,6 @@ go run tickersubscriber.go
 
 ## Notes 
 1. Sometimes it takes a few seconds to start the server because the server needs to fetch the symbols list, and the kucoin REST API can be a bit unstable at times.
-2. Takes a bit of time for the Kline sub to stream data because the server needs to subscribe to *all* of the topics (1000+ topics)
+2. Takes a bit of time for the Kline sub to start streaming data because the server needs to subscribe to *all* of the topics (1000+ topics)
 
 
