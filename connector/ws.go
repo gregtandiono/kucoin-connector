@@ -66,11 +66,14 @@ func (p *Pool) Run() {
 }
 
 func (client *Client) Write() {
-	defer func() {
-		client.pool.unregister <- client
-		client.conn.Close()
-	}()
 	for m := range client.receiver {
+		// handle client disconnection
+		if string(m) == "close" {
+			log.Println("Unregistering client:")
+			client.pool.unregister <- client
+			client.conn.Close()
+		}
+
 		var t TopicSubscription
 		json.Unmarshal(m, &t)
 
@@ -116,6 +119,9 @@ func (client *Client) Write() {
 }
 
 func InitListener(c *websocket.Conn, receiver chan []byte) {
+	defer func() {
+		receiver <- []byte("close")
+	}()
 	ticker := time.NewTicker(150 * time.Millisecond) // staggering the reads so I can see the terminal logs better
 	for {
 		<-ticker.C
